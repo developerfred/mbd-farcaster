@@ -1,34 +1,44 @@
 import {
     elizaLogger,
     Service,
-    IAgentRuntime,
+    type IAgentRuntime,
     ServiceType,
 } from "@elizaos/core";
 
 import {
-    MBDCastFeedResponse,
-    MBDSemanticSearchResponse,
-    MBDLabelsResponse,
-    MBDTextLabelsResponse,
-    MBDUserFeedResponse,
-    MBDUserSearchResponse,
+    type MBDCastFeedResponse,
+    type MBDSemanticSearchResponse,
+    type MBDLabelsResponse,
+    type MBDTextLabelsResponse,
+    type MBDUserFeedResponse,
+    type MBDUserSearchResponse,
     LabelCategory,
     EventType,
-    IMBDService,
+    type IMBDService,
     MBD_SERVICE_TYPE
 } from '../types/mbd-types';
 
+import type {
+    MBDEnvironment,
+    RequestOptions,
+    FeedRequestOptions,
+    SearchRequestOptions
+} from '../types/common-types';
+
+import { ApiClient } from './api-client';
+import {
+    formatCastsResponse,
+    formatUsersResponse,
+    formatLabelsResponse,
+    formatTextLabelsResponse
+} from '../utils/formatters';
+
 export class MBDFarcasterService extends Service implements IMBDService {
     baseUrl: string;
-    headers: {
-        [key: string]: string;
-    };
-    settings: {
-        appName: string;
-        appUrl: string;
-        debug: boolean;
-    };
+    headers: Record<string, string>;
+    settings: MBDEnvironment;
     apiKey: string;
+    private apiClient: ApiClient | null = null;
 
     static get serviceType(): ServiceType {
         return MBD_SERVICE_TYPE;
@@ -39,21 +49,23 @@ export class MBDFarcasterService extends Service implements IMBDService {
     }
 
     async initialize(runtime: IAgentRuntime): Promise<void> {
-        this.apiKey = runtime.getSetting("MBD_API_KEY");
+        // Get API key and other settings
+        this.apiKey = runtime.getSetting("MBD_API_KEY") || "";
         this.baseUrl = "https://api.mbd.xyz/v2/farcaster";
+
+        // Set up headers
         this.headers = {
             'content-type': 'application/json',
             'accept': 'application/json',
         };
 
-        
+        // Set up environment configuration
         const appUrl = runtime.getSetting("MBD_APP_URL") || "https://docs.mbd.xyz/";
         const appName = runtime.getSetting("MBD_APP_NAME") || "eliza_mbd_plugin";
 
         this.headers['HTTP-Referer'] = appUrl;
         this.headers['X-Title'] = appName;
 
-        
         if (this.apiKey) {
             this.headers['Authorization'] = `Bearer ${this.apiKey}`;
         }
@@ -61,8 +73,12 @@ export class MBDFarcasterService extends Service implements IMBDService {
         this.settings = {
             appName,
             appUrl,
-            debug: runtime.getSetting("MBD_DEBUG") === "true"
+            debug: runtime.getSetting("MBD_DEBUG") === "true",
+            apiKey: this.apiKey
         };
+
+        // Initialize API client
+        this.apiClient = new ApiClient(this.baseUrl, this.settings);
 
         if (this.settings.debug) {
             elizaLogger.debug("MBD Farcaster Service initialized with:", {
@@ -72,262 +88,224 @@ export class MBDFarcasterService extends Service implements IMBDService {
                 hasApiKey: !!this.apiKey
             });
         }
-    }
 
-    /**
-     * Helper method for making requests to the MBD API
-     */
-    private async makeRequest<T>(endpoint: string, body: any): Promise<T> {
-        const url = `${this.baseUrl}${endpoint}`;
-
-        if (this.settings.debug) {
-            elizaLogger.debug(`Making request to ${url} with body:`, body);
-        }
-
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: this.headers,
-                body: JSON.stringify(body)
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`MBD API error (${response.status}): ${errorText}`);
-            }
-
-            const data = await response.json();
-
-            if (this.settings.debug) {
-                elizaLogger.debug(`Response from ${endpoint}:`, data);
-            }
-
-            return data as T;
-        } catch (error) {
-            elizaLogger.error(`Error calling MBD API at ${endpoint}:`, error);
-            throw error;
+        // Warn if API key is not provided
+        if (!this.apiKey) {
+            elizaLogger.warn("MBD_API_KEY not defined, plugin may operate with rate limitations");
         }
     }
 
     /**
      * Get "For You" feed - personalized recommendations for a user
      */
-    async getForYouFeed(userId: string, options: any = {}): Promise<MBDCastFeedResponse> {
-        const body: any = {
+    async getForYouFeed(userId: string, options: RequestOptions = {}): Promise<MBDCastFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
+        const body: Record<string, any> = {
             user_id: userId,
             ...options
         };
 
-        return this.makeRequest<MBDCastFeedResponse>('/casts/feed/for-you', body);
+        return this.apiClient.post<MBDCastFeedResponse>('/casts/feed/for-you', body);
     }
 
     /**
      * Get trending cast feed
      */
-    async getTrendingFeed(options: any = {}): Promise<MBDCastFeedResponse> {
-        return this.makeRequest<MBDCastFeedResponse>('/casts/feed/trending', options);
+    async getTrendingFeed(options: RequestOptions = {}): Promise<MBDCastFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
+        return this.apiClient.post<MBDCastFeedResponse>('/casts/feed/trending', options);
     }
 
     /**
      * Get popular cast feed
      */
-    async getPopularFeed(options: any = {}): Promise<MBDCastFeedResponse> {
-        return this.makeRequest<MBDCastFeedResponse>('/casts/feed/popular', options);
+    async getPopularFeed(options: RequestOptions = {}): Promise<MBDCastFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
+        return this.apiClient.post<MBDCastFeedResponse>('/casts/feed/popular', options);
     }
 
     /**
      * Perform semantic cast search
      */
-    async semanticSearch(query: string, options: any = {}): Promise<MBDSemanticSearchResponse> {
+    async semanticSearch(query: string, options: SearchRequestOptions = {}): Promise<MBDSemanticSearchResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             query,
             ...options
         };
 
-        return this.makeRequest<MBDSemanticSearchResponse>('/casts/search/semantic', body);
+        return this.apiClient.post<MBDSemanticSearchResponse>('/casts/search/semantic', body);
     }
 
     /**
      * Get AI labels for a cast list
      */
     async getLabelsForItems(itemsList: string[], labelCategory: LabelCategory): Promise<MBDLabelsResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             items_list: itemsList,
             label_category: labelCategory
         };
 
-        return this.makeRequest<MBDLabelsResponse>('/casts/labels/for-items', body);
+        return this.apiClient.post<MBDLabelsResponse>('/casts/labels/for-items', body);
     }
 
     /**
      * Get AI labels for texts
      */
     async getLabelsForText(textInputs: string[], labelCategory: LabelCategory): Promise<MBDTextLabelsResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             text_inputs: textInputs,
             label_category: labelCategory
         };
 
-        return this.makeRequest<MBDTextLabelsResponse>('/casts/labels/for-text', body);
+        return this.apiClient.post<MBDTextLabelsResponse>('/casts/labels/for-text', body);
     }
 
     /**
      * Get casts with the highest or lowest scores for a given label
      */
-    async getTopItemsByLabel(label: string, options: any = {}): Promise<MBDCastFeedResponse> {
+    async getTopItemsByLabel(label: string, options: RequestOptions = {}): Promise<MBDCastFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             label,
             ...options
         };
 
-        return this.makeRequest<MBDCastFeedResponse>('/casts/labels/top-items', body);
+        return this.apiClient.post<MBDCastFeedResponse>('/casts/labels/top-items', body);
     }
 
     /**
      * Get users similar to a specific user
      */
-    async getSimilarUsers(userId: string, options: any = {}): Promise<MBDUserFeedResponse> {
+    async getSimilarUsers(userId: string, options: RequestOptions = {}): Promise<MBDUserFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             user_id: userId,
             ...options
         };
 
-        return this.makeRequest<MBDUserFeedResponse>('/users/feed/similar', body);
+        return this.apiClient.post<MBDUserFeedResponse>('/users/feed/similar', body);
     }
 
     /**
      * Search users based on text
      */
-    async searchUsers(query: string, options: any = {}): Promise<MBDUserSearchResponse> {
+    async searchUsers(query: string, options: RequestOptions = {}): Promise<MBDUserSearchResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             query,
             ...options
         };
 
-        return this.makeRequest<MBDUserSearchResponse>('/users/search/semantic', body);
+        return this.apiClient.post<MBDUserSearchResponse>('/users/search/semantic', body);
     }
 
     /**
      * Get users for a channel
      */
-    async getUsersForChannel(channel: string, eventType: EventType, options: any = {}): Promise<MBDUserFeedResponse> {
+    async getUsersForChannel(
+        channel: string,
+        eventType: EventType,
+        options: RequestOptions = {}
+    ): Promise<MBDUserFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             channel,
             event_type: eventType,
             ...options
         };
 
-        return this.makeRequest<MBDUserFeedResponse>('/users/feed/for-channel', body);
+        return this.apiClient.post<MBDUserFeedResponse>('/users/feed/for-channel', body);
     }
 
     /**
      * Get users for an item
      */
-    async getUsersForItem(itemId: string, eventType: EventType, options: any = {}): Promise<MBDUserFeedResponse> {
+    async getUsersForItem(
+        itemId: string,
+        eventType: EventType,
+        options: RequestOptions = {}
+    ): Promise<MBDUserFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             item_id: itemId,
             event_type: eventType,
             ...options
         };
 
-        return this.makeRequest<MBDUserFeedResponse>('/users/feed/for-item', body);
+        return this.apiClient.post<MBDUserFeedResponse>('/users/feed/for-item', body);
     }
 
     /**
      * Get users for a topic
      */
-    async getUsersForTopic(topic: string, eventType: EventType, options: any = {}): Promise<MBDUserFeedResponse> {
+    async getUsersForTopic(
+        topic: string,
+        eventType: EventType,
+        options: RequestOptions = {}
+    ): Promise<MBDUserFeedResponse> {
+        if (!this.apiClient) {
+            throw new Error("MBD Service not initialized");
+        }
+
         const body = {
             topic,
             event_type: eventType,
             ...options
         };
 
-        return this.makeRequest<MBDUserFeedResponse>('/users/feed/for-topic', body);
+        return this.apiClient.post<MBDUserFeedResponse>('/users/feed/for-topic', body);
     }
 
-    /**
-     * Helper method to format cast response to readable text
-     */
+    // Public formatter methods that delegate to the common formatters
     formatCastsResponse(response: MBDCastFeedResponse): string {
-        if (!response.success || !response.data || response.data.length === 0) {
-            return "No results found.";
-        }
-
-        let result = "### Casts on Farcaster\n\n";
-
-        response.data.forEach((cast, index) => {
-            const author = cast.author.display_name || cast.author.username;
-            const timestamp = new Date(cast.timestamp).toLocaleString();
-
-            result += `**${index + 1}. @${cast.author.username} (${author})**\n`;
-            result += `${cast.text}\n`;
-
-            if (cast.likes_count || cast.replies_count || cast.recasts_count) {
-                result += `*${cast.likes_count || 0} likes • ${cast.replies_count || 0} reply • ${cast.recasts_count || 0} recasts*\n`;
-            }
-
-            result += `*Published in: ${timestamp}*\n\n`;
-        });
-
-        return result;
+        return formatCastsResponse(response);
     }
 
-    /**
-     * Helper method to format user response to readable text
-     */
     formatUsersResponse(response: MBDUserFeedResponse): string {
-        if (!response.success || !response.data || response.data.length === 0) {
-            return "No users found.";
-        }
-
-        let result = "### Farcaster Users\n\n";
-
-        response.data.forEach((user, index) => {
-            const name = user.display_name || user.username;
-
-            result += `**${index + 1}. @${user.username} (${name})**\n`;
-
-            if (user.bio) {
-                result += `${user.bio}\n`;
-            }
-
-            if (user.followers_count || user.following_count) {
-                result += `*${user.followers_count || 0} followers • ${user.following_count || 0} following*\n`;
-            }
-
-            if (user.score) {
-                result += `*Score: ${user.score.toFixed(2)}*\n`;
-            }
-
-            result += '\n';
-        });
-
-        return result;
+        return formatUsersResponse(response);
     }
 
-    /**
-     * Helper method to format label response to readable text
-     */
     formatLabelsResponse(response: MBDLabelsResponse): string {
-        if (!response.success || !response.data) {
-            return "No labels found.";
-        }
+        return formatLabelsResponse(response);
+    }
 
-        let result = "### AI Labels for Content\n\n";
-
-        Object.entries(response.data).forEach(([itemId, labels]) => {
-            result += `**Item ID: ${itemId}**\n`;
-
-            Object.entries(labels)
-                .sort((a, b) => b[1] - a[1]) 
-                .forEach(([label, value]) => {
-                    result += `- ${label}: ${(value * 100).toFixed(1)}%\n`;
-                });
-
-            result += '\n';
-        });
-
-        return result;
+    formatTextLabelsResponse(response: MBDTextLabelsResponse, textInputs: string[]): string {
+        return formatTextLabelsResponse(response, textInputs);
     }
 }

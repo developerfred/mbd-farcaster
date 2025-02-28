@@ -28,5 +28,8 @@
         "default": false
       }
     }
+  },
+  "dependencies": {
+    "@elizaos/core": "^0.25.8"
   }
 }

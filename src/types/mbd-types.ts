@@ -26,7 +26,6 @@ export enum ScoringType {
 
 export interface MBDFilters {
     promotion_filters?: PromotionFilter[];
-    [key: string]: any;
 }
 
 
@@ -148,6 +147,94 @@ export interface MBDUserSearchResponse {
     data: MBDUser[];
     success: boolean;
     message?: string;
+}
+
+
+/**
+ * MBD API Error interface extending the standard Error
+ */
+export interface MBDError extends Error {
+    /** HTTP status code if applicable */
+    status?: number;
+
+    /** Error code from the API if available */
+    code?: string;
+
+    /** Context where the error occurred */
+    context?: string;
+
+    /** Original request details */
+    request?: {
+        endpoint?: string;
+        params?: Record<string, any>;
+    };
+}
+
+/**
+ * Promotion filter for controlling item placement in feeds
+ */
+export interface PromotionFilter {
+    /** Type of promotion to apply */
+    promotion_type: 'feed' | 'items';
+
+    /** ID of feed to promote from (if type is 'feed') */
+    feed_id?: string;
+
+    /** Percentage of results to include from promotion source */
+    percent?: number;
+
+    /** Specific items to promote (if type is 'items') */
+    items?: string[];
+
+    /** Specific ranks to insert promoted items */
+    ranks?: number[];
+}
+
+/**
+ * Content filters for MBD API requests
+ */
+export interface MBDFilters {
+    /** Filters for promoted content */
+    promotion_filters?: PromotionFilter[];
+
+    /** User-specific filters (FIDs to include or exclude) */
+    user_filters?: {
+        /** Users to exclude from results */
+        exclude_users?: string[];
+
+        /** Only include these users in results */
+        include_users?: string[];
+    };
+
+    /** Time-based filters */
+    time_filters?: {
+        /** Minimum timestamp (in milliseconds since epoch) */
+        min_timestamp?: number;
+
+        /** Maximum timestamp (in milliseconds since epoch) */
+        max_timestamp?: number;
+    };
+
+    /** Label-based filters */
+    label_filters?: {
+        /** Only include content with these labels above threshold */
+        required_labels?: Record<string, number>;
+
+        /** Exclude content with these labels above threshold */
+        excluded_labels?: Record<string, number>;
+    };
+
+    /** Channel-based filters */
+    channel_filters?: {
+        /** Only include content from these channels */
+        include_channels?: string[];
+
+        /** Exclude content from these channels */
+        exclude_channels?: string[];
+    };
+
+    /** Custom filters can be added as needed */
+    [key: string]: any;
 }
 
 
